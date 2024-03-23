@@ -210,7 +210,8 @@ std::string xdmf_utils::vtk_cell_type_str(mesh::CellType cell_type,
   return cell_str->second;
 }
 //-----------------------------------------------------------------------------
-std::pair<std::vector<std::int32_t>, std::vector<std::int32_t>>
+template <typename T>
+std::pair<std::vector<std::int32_t>, std::vector<T>>
 xdmf_utils::distribute_entity_data(
     const mesh::Topology& topology, std::span<const std::int64_t> nodes_g,
     std::int64_t num_nodes_g, const fem::ElementDofLayout& cmap_dof_layout,
@@ -223,7 +224,7 @@ xdmf_utils::distribute_entity_data(
         const std::int64_t,
         MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
         entities,
-    std::span<const std::int32_t> data)
+    std::span<const T> data)
 {
   assert(entities.extent(0) == data.size());
   LOG(INFO) << "XDMF distribute entity data";
@@ -287,7 +288,7 @@ xdmf_utils::distribute_entity_data(
   // -- B. Send entities and entity data to postmaster
   auto send_entities_to_postmater
       = [](MPI_Comm comm, MPI_Datatype compound_type, std::int64_t num_nodes_g,
-           auto entities, std::span<const std::int32_t> data)
+           auto entities, std::span<const T> data)
   {
     const int size = dolfinx::MPI::size(comm);
 
@@ -572,7 +573,8 @@ xdmf_utils::distribute_entity_data(
         input_idx_to_vertex[nodes_g[xdofs[cell_vertex_dofs[v]]]] = vertices[v];
     }
 
-    std::vector<std::int32_t> entities, data;
+    std::vector<std::int32_t> entities;
+    std::vector<T> data;
     std::vector<std::int32_t> entity(entities_data.extent(1) - 1);
     for (std::size_t e = 0; e < entities_data.extent(0); ++e)
     {
@@ -606,4 +608,35 @@ xdmf_utils::distribute_entity_data(
   return select_entities(topology, xdofmap, nodes_g, cell_vertex_dofs,
                          entities_data);
 }
+
+template std::pair<std::vector<std::int32_t>, std::vector<std::int32_t>>
+xdmf_utils::distribute_entity_data(
+    const mesh::Topology& topology, std::span<const std::int64_t> nodes_g,
+    std::int64_t num_nodes_g, const fem::ElementDofLayout& cmap_dof_layout,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int32_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
+        xdofmap,
+    int entity_dim,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int64_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
+        entities,
+    std::span<const std::int32_t> data);
+
+template std::pair<std::vector<std::int32_t>, std::vector<double>>
+xdmf_utils::distribute_entity_data(
+    const mesh::Topology& topology, std::span<const std::int64_t> nodes_g,
+    std::int64_t num_nodes_g, const fem::ElementDofLayout& cmap_dof_layout,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int32_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
+        xdofmap,
+    int entity_dim,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int64_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
+        entities,
+    std::span<const double> data);
+
 //-----------------------------------------------------------------------------
