@@ -282,11 +282,11 @@ xdmf_utils::distribute_entity_data(
 
   MPI_Comm comm = topology.comm();
   MPI_Datatype compound_type;
-  MPI_Type_contiguous(entities_v.extent(1) + 1, MPI_INT64_T, &compound_type);
+  MPI_Type_contiguous(entities_v.extent(1), MPI_INT64_T, &compound_type);
   MPI_Type_commit(&compound_type);
 
   // -- B. Send entities and entity data to postmaster
-  auto send_entities_to_postmater
+  auto send_entities_to_postmaster
       = [](MPI_Comm comm, MPI_Datatype compound_type, std::int64_t num_nodes_g,
            auto entities, std::span<const T> data)
   {
@@ -355,32 +355,44 @@ xdmf_utils::distribute_entity_data(
 
     // Prepare send buffer
     std::vector<std::int64_t> send_buffer;
-    send_buffer.reserve(entities.size() + data.size());
+    send_buffer.reserve(entities.size());
+    std::vector<T> send_data_buffer;
+    send_data_buffer.reserve(data.size());
     for (std::size_t e = 0; e < entities.extent(0); ++e)
     {
       auto idx = perm[e];
       auto it = std::next(entities.data_handle(), idx * entities.extent(1));
       send_buffer.insert(send_buffer.end(), it, it + entities.extent(1));
-      send_buffer.push_back(data[idx]);
+      send_data_buffer.push_back(data[idx]);
     }
 
     std::vector<std::int64_t> recv_buffer(recv_disp.back()
                                           * (entities.extent(1) + 1));
+    std::vector<T> recv_data_buffer(recv_disp.back()
+                                    * (entities.extent(1) + 1));
     err = MPI_Neighbor_alltoallv(send_buffer.data(), num_items_send.data(),
                                  send_disp.data(), compound_type,
                                  recv_buffer.data(), num_items_recv.data(),
                                  recv_disp.data(), compound_type, comm0);
+
+    err = MPI_Neighbor_alltoall(send_data_buffer.data(), 1, MPI::mpi_type<T>(),
+                                recv_data_buffer.data(), 1, MPI::mpi_type<T>(),
+                                comm0);
     dolfinx::MPI::check_error(comm, err);
     err = MPI_Comm_free(&comm0);
     dolfinx::MPI::check_error(comm, err);
 
-    std::array shape{recv_buffer.size() / (entities.extent(1) + 1),
-                     (entities.extent(1) + 1)};
-    return std::pair(std::move(recv_buffer), shape);
+    std::array shape{recv_buffer.size() / entities.extent(1),
+                     entities.extent(1)};
+    std::array<std::size_t, 2> shape_data{recv_data_buffer.size(), 1};
+    return std::tuple(std::move(recv_buffer), shape,
+                      std::move(recv_data_buffer), shape_data);
   };
-  const auto [entitiesp_b, shapep] = send_entities_to_postmater(
-      comm, compound_type, num_nodes_g, entities_v, data);
+  const auto [entitiesp_b, shapep, data_b, shaped]
+      = send_entities_to_postmaster(comm, compound_type, num_nodes_g,
+                                    entities_v, data);
   mdspan_t<const std::int64_t, 2> entitiesp(entitiesp_b.data(), shapep);
+  mdspan_t<const T, 2> datasp(data_b.data(), shaped);
 
   // -- C. Send mesh global indices to postmaster
   auto indices_to_postoffice = [](MPI_Comm comm, std::int64_t num_nodes,
