@@ -1,4 +1,4 @@
-// Copyright (C) 2012 Chris N. Richardson
+// Copyright (C) 2012-2024 Chris N. Richardson, Jørgen S. Dokken
 //
 // This file is part of DOLFINx (https://www.fenicsproject.org)
 //
@@ -105,8 +105,7 @@ std::string vtk_cell_type_str(mesh::CellType cell_type, int num_nodes);
 /// distributed and rank1 will receive the (local) cell-vertex
 /// connectivity for this triangle.
 template <typename T>
-std::pair<std::vector<std::int32_t>, std::vector<T>>
-distribute_entity_data(
+std::pair<std::vector<std::int32_t>, std::vector<T>> distribute_entity_data(
     const mesh::Topology& topology, std::span<const std::int64_t> nodes_g,
     std::int64_t num_nodes_g, const fem::ElementDofLayout& cmap_dof_layout,
     MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<

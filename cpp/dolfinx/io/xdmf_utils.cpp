@@ -355,44 +355,43 @@ xdmf_utils::distribute_entity_data(
 
     // Prepare send buffer
     std::vector<std::int64_t> send_buffer;
+    std::vector<T> send_values_buffer;
     send_buffer.reserve(entities.size());
-    std::vector<T> send_data_buffer;
-    send_data_buffer.reserve(data.size());
+    send_values_buffer.reserve(data.size());
     for (std::size_t e = 0; e < entities.extent(0); ++e)
     {
       auto idx = perm[e];
       auto it = std::next(entities.data_handle(), idx * entities.extent(1));
       send_buffer.insert(send_buffer.end(), it, it + entities.extent(1));
-      send_data_buffer.push_back(data[idx]);
+      send_values_buffer.push_back(data[idx]);
     }
 
     std::vector<std::int64_t> recv_buffer(recv_disp.back()
-                                          * (entities.extent(1) + 1));
-    std::vector<T> recv_data_buffer(recv_disp.back()
-                                    * (entities.extent(1) + 1));
+                                          * entities.extent(1));
     err = MPI_Neighbor_alltoallv(send_buffer.data(), num_items_send.data(),
                                  send_disp.data(), compound_type,
                                  recv_buffer.data(), num_items_recv.data(),
                                  recv_disp.data(), compound_type, comm0);
-
-    err = MPI_Neighbor_alltoall(send_data_buffer.data(), 1, MPI::mpi_type<T>(),
-                                recv_data_buffer.data(), 1, MPI::mpi_type<T>(),
-                                comm0);
+    dolfinx::MPI::check_error(comm, err);
+    std::vector<T> recv_values_buffer(recv_disp.back());
+    err = MPI_Neighbor_alltoallv(
+        send_values_buffer.data(), num_items_send.data(), send_disp.data(),
+        dolfinx::MPI::mpi_type<T>(), recv_values_buffer.data(),
+        num_items_recv.data(), recv_disp.data(), dolfinx::MPI::mpi_type<T>(),
+        comm0);
     dolfinx::MPI::check_error(comm, err);
     err = MPI_Comm_free(&comm0);
     dolfinx::MPI::check_error(comm, err);
 
-    std::array shape{recv_buffer.size() / entities.extent(1),
-                     entities.extent(1)};
-    std::array<std::size_t, 2> shape_data{recv_data_buffer.size(), 1};
-    return std::tuple(std::move(recv_buffer), shape,
-                      std::move(recv_data_buffer), shape_data);
+    std::array shape{recv_buffer.size() / (entities.extent(1)),
+                     (entities.extent(1))};
+    return std::tuple<std::vector<std::int64_t>, std::vector<T>,
+                      std::array<std::size_t, 2>>(
+        std::move(recv_buffer), std::move(recv_values_buffer), shape);
   };
-  const auto [entitiesp_b, shapep, data_b, shaped]
-      = send_entities_to_postmaster(comm, compound_type, num_nodes_g,
-                                    entities_v, data);
+  const auto [entitiesp_b, entitiesp_v, shapep] = send_entities_to_postmaster(
+      comm, compound_type, num_nodes_g, entities_v, data);
   mdspan_t<const std::int64_t, 2> entitiesp(entitiesp_b.data(), shapep);
-  mdspan_t<const T, 2> datasp(data_b.data(), shaped);
 
   // -- C. Send mesh global indices to postmaster
   auto indices_to_postoffice = [](MPI_Comm comm, std::int64_t num_nodes,
@@ -481,7 +480,7 @@ xdmf_utils::distribute_entity_data(
       = [](MPI_Comm comm, MPI_Datatype compound_type,
            std::span<const std::int64_t> indices_recv,
            std::span<const int> indices_recv_disp, std::span<const int> src,
-           std::span<const int> dest, auto entities)
+           std::span<const int> dest, auto entities, std::span<const T> data)
   {
     // Build map from received global node indices to neighbourhood
     // ranks that have the node
@@ -491,6 +490,7 @@ xdmf_utils::distribute_entity_data(
         node_to_rank.insert({indices_recv[j], i});
 
     std::vector<std::vector<std::int64_t>> send_data(dest.size());
+    std::vector<std::vector<T>> send_values(dest.size());
     for (std::size_t e = 0; e < entities.extent(0); ++e)
     {
       std::span e_recv(entities.data_handle() + e * entities.extent(1),
@@ -499,9 +499,8 @@ xdmf_utils::distribute_entity_data(
       for (auto it = it0; it != it1; ++it)
       {
         int p = it->second;
-        send_data[p].insert(send_data[p].end(), e_recv.begin(),
-                            e_recv.end() - 1);
-        send_data[p].push_back(e_recv.back());
+        send_data[p].insert(send_data[p].end(), e_recv.begin(), e_recv.end());
+        send_values[p].push_back(data[e]);
       }
     }
 
@@ -532,29 +531,45 @@ xdmf_utils::distribute_entity_data(
     std::partial_sum(num_items_recv.begin(), num_items_recv.end(),
                      std::next(recv_disp.begin()));
 
-    // Prepare send buffer
+    // Prepare send buffers
     std::vector<std::int64_t> send_buffer;
+    std::vector<T> send_values_buffer;
     for (auto& x : send_data)
       send_buffer.insert(send_buffer.end(), x.begin(), x.end());
-
+    for (auto& v : send_values)
+      send_values_buffer.insert(send_values_buffer.end(), v.begin(), v.end());
     std::vector<std::int64_t> recv_buffer(entities.extent(1)
                                           * recv_disp.back());
     err = MPI_Neighbor_alltoallv(send_buffer.data(), num_items_send.data(),
                                  send_disp.data(), compound_type,
                                  recv_buffer.data(), num_items_recv.data(),
                                  recv_disp.data(), compound_type, comm0);
+
     dolfinx::MPI::check_error(comm, err);
+
+    std::vector<T> recv_values_buffer(recv_disp.back());
+    err = MPI_Neighbor_alltoallv(
+        send_values_buffer.data(), num_items_send.data(), send_disp.data(),
+        dolfinx::MPI::mpi_type<T>(), recv_values_buffer.data(),
+        num_items_recv.data(), recv_disp.data(), dolfinx::MPI::mpi_type<T>(),
+        comm0);
+
+    dolfinx::MPI::check_error(comm, err);
+
     err = MPI_Comm_free(&comm0);
     dolfinx::MPI::check_error(comm, err);
 
     std::array shape{recv_buffer.size() / entities.extent(1),
                      entities.extent(1)};
-    return std::pair(std::move(recv_buffer), shape);
+    return std::tuple<std::vector<std::int64_t>, std::vector<T>,
+                      std::array<std::size_t, 2>>(
+        std::move(recv_buffer), std::move(recv_values_buffer), shape);
   };
   // NOTE: src and dest are transposed here because we're reversing the
   // direction of communication
-  const auto [entities_data_b, shape_eb] = candidate_ranks(
-      comm, compound_type, nodes_g_p, recv_disp, dest, src, entitiesp);
+  const auto [entities_data_b, entities_values, shape_eb]
+      = candidate_ranks(comm, compound_type, nodes_g_p, recv_disp, dest, src,
+                        entitiesp, std::span(entitiesp_v));
   mdspan_t<const std::int64_t, 2> entities_data(entities_data_b.data(),
                                                 shape_eb);
 
@@ -568,7 +583,8 @@ xdmf_utils::distribute_entity_data(
   auto select_entities
       = [](const mesh::Topology& topology, auto xdofmap,
            std::span<const std::int64_t> nodes_g,
-           std::span<const int> cell_vertex_dofs, auto entities_data)
+           std::span<const int> cell_vertex_dofs, auto entities_data,
+           std::span<const T> entities_values)
   {
     LOG(INFO) << "XDMF build map";
     auto c_to_v = topology.connectivity(topology.dim(), 0);
@@ -587,11 +603,11 @@ xdmf_utils::distribute_entity_data(
 
     std::vector<std::int32_t> entities;
     std::vector<T> data;
-    std::vector<std::int32_t> entity(entities_data.extent(1) - 1);
+    std::vector<std::int32_t> entity(entities_data.extent(1));
     for (std::size_t e = 0; e < entities_data.extent(0); ++e)
     {
       bool entity_found = true;
-      for (std::size_t i = 0; i < entities_data.extent(1) - 1; ++i)
+      for (std::size_t i = 0; i < entities_data.extent(1); ++i)
       {
         if (auto it = input_idx_to_vertex.find(entities_data(e, i));
             it == input_idx_to_vertex.end())
@@ -608,7 +624,7 @@ xdmf_utils::distribute_entity_data(
       if (entity_found)
       {
         entities.insert(entities.end(), entity.begin(), entity.end());
-        data.push_back(entities_data(e, entities_data.extent(1) - 1));
+        data.push_back(entities_values[e]);
       }
     }
 
@@ -618,37 +634,69 @@ xdmf_utils::distribute_entity_data(
   MPI_Type_free(&compound_type);
 
   return select_entities(topology, xdofmap, nodes_g, cell_vertex_dofs,
-                         entities_data);
+                         entities_data, std::span(entities_values));
 }
-
-template std::pair<std::vector<std::int32_t>, std::vector<std::int32_t>>
-xdmf_utils::distribute_entity_data(
-    const mesh::Topology& topology, std::span<const std::int64_t> nodes_g,
-    std::int64_t num_nodes_g, const fem::ElementDofLayout& cmap_dof_layout,
-    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
-        const std::int32_t,
-        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
-        xdofmap,
-    int entity_dim,
-    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
-        const std::int64_t,
-        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
-        entities,
-    std::span<const std::int32_t> data);
-
+//-----------------------------------------------------------------------------
+/// @cond
 template std::pair<std::vector<std::int32_t>, std::vector<double>>
 xdmf_utils::distribute_entity_data(
-    const mesh::Topology& topology, std::span<const std::int64_t> nodes_g,
-    std::int64_t num_nodes_g, const fem::ElementDofLayout& cmap_dof_layout,
+    const mesh::Topology&, std::span<const std::int64_t>, std::int64_t,
+    const fem::ElementDofLayout&,
     MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
         const std::int32_t,
-        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
-        xdofmap,
-    int entity_dim,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    int,
     MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
         const std::int64_t,
-        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>
-        entities,
-    std::span<const double> data);
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    std::span<const double>);
+template std::pair<std::vector<std::int32_t>, std::vector<float>>
+xdmf_utils::distribute_entity_data(
+    const mesh::Topology&, std::span<const std::int64_t>, std::int64_t,
+    const fem::ElementDofLayout&,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int32_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    int,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int64_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    std::span<const float>);
+template std::pair<std::vector<std::int32_t>, std::vector<std::int32_t>>
+xdmf_utils::distribute_entity_data(
+    const mesh::Topology&, std::span<const std::int64_t>, std::int64_t,
+    const fem::ElementDofLayout&,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int32_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    int,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int64_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    std::span<const std::int32_t>);
+template std::pair<std::vector<std::int32_t>, std::vector<std::complex<double>>>
+xdmf_utils::distribute_entity_data(
+    const mesh::Topology&, std::span<const std::int64_t>, std::int64_t,
+    const fem::ElementDofLayout&,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int32_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    int,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int64_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    std::span<const std::complex<double>>);
+template std::pair<std::vector<std::int32_t>, std::vector<std::complex<float>>>
+xdmf_utils::distribute_entity_data(
+    const mesh::Topology&, std::span<const std::int64_t>, std::int64_t,
+    const fem::ElementDofLayout&,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int32_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    int,
+    MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
+        const std::int64_t,
+        MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 2>>,
+    std::span<const std::complex<float>>);
 
-//-----------------------------------------------------------------------------
+/// @endcond

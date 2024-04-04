@@ -306,11 +306,11 @@ void XDMFFile::read_function(const mesh::Mesh<double>& mesh, std::string name,
    *            <Topology TopologyType="Hexahedron" NumberOfElements="15000"
    * NodesPerElement="8"> <DataItem DataType="Int" Dimensions="15000 8"
    * Format="HDF" Precision="8"> power.h5:/data1</DataItem>
-   *           </Topology>
-   *           <Attribute Name="wall power density" AttributeType="Scalar"
+   *            </Topology>
+   *            <Attribute Name="wall power density" AttributeType="Scalar"
    * Center="Node"> <DataItem DataType="Float" Dimensions="23103" Format="HDF"
    * Precision="8"> power.h5:/data2</DataItem>
-   *           </Attribute>
+   *            </Attribute>
    *      </Grid>
    *  </Domain>
    *  </Xdmf>
@@ -335,8 +335,6 @@ void XDMFFile::read_function(const mesh::Mesh<double>& mesh, std::string name,
    * This is reading the topology, aka the cells, which we don't need, so I
    * skip this step
    */
-  // const auto [entities, eshape] = read_topology_data(name, xpath);
-
   pugi::xml_node values_data_node
       = grid_node.child("Attribute").child("DataItem");
   const std::vector values
@@ -346,9 +344,6 @@ void XDMFFile::read_function(const mesh::Mesh<double>& mesh, std::string name,
    * Similarly, reading the cell type would read "hexahedron", so I set this
    * manually to "point" instead.
    */
-  // const std::pair<std::string, int> cell_type_str
-  //     = xdmf_utils::get_cell_type(grid_node.child("Topology"));
-  // mesh::CellType cell_type = mesh::to_type(cell_type_str.first);
   mesh::CellType cell_type = mesh::CellType::point;
 
   /*
@@ -360,17 +355,6 @@ void XDMFFile::read_function(const mesh::Mesh<double>& mesh, std::string name,
   std::array<std::size_t, 2> eshape{values.size(), 1};
   std::iota(std::begin(entities1), std::end(entities1),
             mesh.topology()->index_map(0)->local_range()[0]);
-
-  LOG(INFO) << "local_range = ("
-            << mesh.topology()->index_map(0)->local_range()[0] << ", "
-            << mesh.topology()->index_map(0)->local_range()[1] << ")";
-  LOG(INFO) << "values.size() = " << values.size();
-
-  // LOG(INFO) << "(" <<
-  // u.function_space()->dofmap()->index_map->local_range()[0]
-  //           << ", " <<
-  //           u.function_space()->dofmap()->index_map->local_range()[1]
-  //           << ")";
 
   MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
       const std::int64_t,
