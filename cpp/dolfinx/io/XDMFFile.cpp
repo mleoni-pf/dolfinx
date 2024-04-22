@@ -322,7 +322,7 @@ void XDMFFile::read_function(const mesh::Mesh<double>& mesh, std::string name,
    *  the vertexes of the mesh. This is different from the meshtags I am used to
    *  in that meshtags are cell data, not point data.
    */
-  LOG(INFO) << "XDMF read meshtags (" << name << ")";
+  LOG(INFO) << "XDMF read function (" << name << ")";
   pugi::xml_node node = _xml_doc->select_node(xpath.c_str()).node();
   if (!node)
     throw std::runtime_error("XML node '" + xpath + "' not found.");
