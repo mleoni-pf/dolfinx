@@ -176,9 +176,10 @@ public:
   /// @param[in] mesh The Mesh that the data is defined on
   /// @param[in] name
   /// @param[in] xpath XPath where MeshTags Grid is stored in file
-  mesh::MeshTags<std::int32_t>
-  read_meshtags(const mesh::Mesh<double>& mesh, std::string name,
-                std::string xpath = "/Xdmf/Domain");
+  template <typename T = std::int32_t>
+  mesh::MeshTags<T> read_meshtags(const mesh::Mesh<double>& mesh,
+                                             std::string name,
+                                             std::string xpath = "/Xdmf/Domain");
 
   /// Write Information
   /// @param[in] name
