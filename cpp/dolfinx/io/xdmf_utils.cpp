@@ -227,7 +227,7 @@ xdmf_utils::distribute_entity_data(
     std::span<const T> data)
 {
   assert(entities.extent(0) == data.size());
-  LOG(INFO) << "XDMF distribute entity data";
+  spdlog::info("XDMF distribute entity data");
   mesh::CellType cell_type = topology.cell_type();
 
   // Get layout of dofs on 0th cell entity of dimension entity_dim
@@ -314,9 +314,9 @@ xdmf_utils::distribute_entity_data(
       while (it != perm.end())
       {
         dest.push_back(dest0[*it]);
-        auto it1 = std::find_if(it, perm.end(),
-                                [&dest0, r = dest.back()](auto idx)
-                                { return dest0[idx] != r; });
+        auto it1
+            = std::find_if(it, perm.end(), [&dest0, r = dest.back()](auto idx)
+                           { return dest0[idx] != r; });
         num_items_send.push_back(std::distance(it, it1));
         it = it1;
       }
@@ -415,9 +415,9 @@ xdmf_utils::distribute_entity_data(
       while (it != dest_to_index.end())
       {
         dest.push_back(it->first);
-        auto it1 = std::find_if(it, dest_to_index.end(),
-                                [r = dest.back()](auto idx)
-                                { return idx.first != r; });
+        auto it1
+            = std::find_if(it, dest_to_index.end(), [r = dest.back()](auto idx)
+                           { return idx.first != r; });
         num_items_send.push_back(std::distance(it, it1));
         it = it1;
       }
@@ -586,7 +586,7 @@ xdmf_utils::distribute_entity_data(
            std::span<const int> cell_vertex_dofs, auto entities_data,
            std::span<const T> entities_values)
   {
-    LOG(INFO) << "XDMF build map";
+    spdlog::info("XDMF build map");
     auto c_to_v = topology.connectivity(topology.dim(), 0);
     if (!c_to_v)
       throw std::runtime_error("Missing cell-vertex connectivity.");
