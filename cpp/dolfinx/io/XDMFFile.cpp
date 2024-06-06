@@ -473,7 +473,7 @@ XDMFFile::read_meshtags(const mesh::Mesh<double>& mesh, std::string name,
 
   pugi::xml_node attribute_node = grid_node.child("Attribute");
   pugi::xml_node values_data_node = attribute_node.child("DataItem");
-  if (attribute_name.size() != 0)
+  if (not attribute_name.empty())
   {
     bool found = false;
     for (; attribute_node;
