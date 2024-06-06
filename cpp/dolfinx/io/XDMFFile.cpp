@@ -331,10 +331,6 @@ void XDMFFile::read_function(const mesh::Mesh<double>& mesh, std::string name,
   if (!grid_node)
     throw std::runtime_error("<Grid> with name '" + name + "' not found.");
 
-  /*
-   * This is reading the topology, aka the cells, which we don't need, so I
-   * skip this step
-   */
   pugi::xml_node values_data_node
       = grid_node.child("Attribute").child("DataItem");
   const std::vector values
