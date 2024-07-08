@@ -607,11 +607,13 @@ void declare_form(nb::module_& m, std::string type)
           [](dolfinx::fem::Form<T, U>* fp,
              const std::vector<
                  std::shared_ptr<const dolfinx::fem::FunctionSpace<U>>>& spaces,
-             const std::map<dolfinx::fem::IntegralType,
-                            std::vector<std::tuple<
-                                int, std::uintptr_t,
-                                nb::ndarray<const std::int32_t, nb::ndim<1>,
-                                            nb::c_contig>>>>& integrals,
+             const std::map<
+                 dolfinx::fem::IntegralType,
+                 std::vector<std::tuple<
+                     int, std::uintptr_t,
+                     nb::ndarray<const std::int32_t, nb::ndim<1>, nb::c_contig>,
+                     nb::ndarray<const std::int8_t, nb::ndim<1>,
+                                 nb::c_contig>>>>& integrals,
              const std::vector<std::shared_ptr<
                  const dolfinx::fem::Function<T, U>>>& coefficients,
              const std::vector<
@@ -629,7 +631,7 @@ void declare_form(nb::module_& m, std::string type)
             // Loop over kernel for each entity type
             for (auto& [type, kernels] : integrals)
             {
-              for (auto& [id, ptr, e] : kernels)
+              for (auto& [id, ptr, e, c] : kernels)
               {
                 auto kn_ptr
                     = (void (*)(T*, const T*, const T*,
@@ -637,7 +639,8 @@ void declare_form(nb::module_& m, std::string type)
                                 const int*, const std::uint8_t*))ptr;
                 _integrals[type].emplace_back(
                     id, kn_ptr,
-                    std::span<const std::int32_t>(e.data(), e.size()));
+                    std::span<const std::int32_t>(e.data(), e.size()),
+                    std::vector<int>(c.data(), c.data() + c.size()));
               }
             }
 
@@ -779,6 +782,42 @@ void declare_form(nb::module_& m, std::string type)
         ufcx_form* p = reinterpret_cast<ufcx_form*>(form);
         return dolfinx::fem::create_form_factory<T>(*p, spaces, coefficients,
                                                     constants, sd, {}, mesh);
+      },
+      nb::arg("form"), nb::arg("spaces"), nb::arg("coefficients"),
+      nb::arg("constants"), nb::arg("subdomains"), nb::arg("mesh"),
+      "Create Form from a pointer to ufcx_form.");
+  m.def(
+      pymethod_create_form.c_str(),
+      [](std::uintptr_t form,
+         const std::vector<
+             std::shared_ptr<const dolfinx::fem::FunctionSpace<U>>>& spaces,
+         const std::map<std::string,
+                        std::shared_ptr<const dolfinx::fem::Function<T, U>>>&
+             coefficients,
+         const std::map<std::string,
+                        std::shared_ptr<const dolfinx::fem::Constant<T>>>&
+             constants,
+         const std::map<dolfinx::fem::IntegralType,
+                        std::vector<std::pair<std::int32_t,
+                                              std::span<const std::int32_t>>>>&
+             subdomains,
+         std::shared_ptr<const dolfinx::mesh::Mesh<U>> mesh = nullptr)
+      {
+        std::map<
+            dolfinx::fem::IntegralType,
+            std::vector<std::pair<std::int32_t, std::span<const std::int32_t>>>>
+            sd;
+        for (auto& [itg, data] : subdomains)
+        {
+          std::vector<std::pair<std::int32_t, std::span<const std::int32_t>>> x;
+          for (auto& [id, idx] : data)
+            x.emplace_back(id, std::span(idx.data(), idx.size()));
+          sd.insert({itg, std::move(x)});
+        }
+
+        ufcx_form* p = reinterpret_cast<ufcx_form*>(form);
+        return dolfinx::fem::create_form<T, U>(*p, spaces, coefficients,
+                                               constants, sd, mesh);
       },
       nb::arg("form"), nb::arg("spaces"), nb::arg("coefficients"),
       nb::arg("constants"), nb::arg("subdomains"), nb::arg("mesh"),
