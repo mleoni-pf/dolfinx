@@ -118,6 +118,10 @@ from dolfinx.io import XDMFFile
 from dolfinx.mesh import CellType, create_rectangle, locate_entities_boundary
 from ufl import div, dx, grad, inner
 
+opts = PETSc.Options()
+opts["mat_superlu_dist_iterrefine"] = True
+
+
 # We create a {py:class}`Mesh <dolfinx.mesh.Mesh>`, define functions for
 # locating geometrically subsets of the boundary, and define a function
 # for the  velocity on the lid:
@@ -517,7 +521,8 @@ def mixed_direct():
     b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
 
     # Set Dirichlet boundary condition values in the RHS
-    fem.petsc.set_bc(b, bcs)
+    for bc in bcs:
+        bc.set(b)
 
     # Create and configure solver
     ksp = PETSc.KSP().create(msh.comm)
@@ -573,4 +578,4 @@ np.testing.assert_allclose(norm_p_2, norm_p_0, rtol=1e-4)
 
 # Solve using a non-blocked matrix and an LU solver
 norm_u_3, norm_p_3 = mixed_direct()
-np.testing.assert_allclose(norm_u_3, norm_u_0, rtol=1e-3)
+np.testing.assert_allclose(norm_u_3, norm_u_0, rtol=1e-4)

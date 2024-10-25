@@ -191,9 +191,9 @@ int main(int argc, char* argv[])
 
     //  Define variational forms
     auto a = std::make_shared<fem::Form<T>>(fem::create_form<T>(
-        *form_biharmonic_a, {V, V}, {}, {{"alpha", alpha}}, {}));
+        *form_biharmonic_a, {V, V}, {}, {{"alpha", alpha}}, {}, {}));
     auto L = std::make_shared<fem::Form<T>>(
-        fem::create_form<T>(*form_biharmonic_L, {V}, {{"f", f}}, {}, {}));
+        fem::create_form<T>(*form_biharmonic_L, {V}, {{"f", f}}, {}, {}, {}));
 
     //  Now, the Dirichlet boundary condition ($u = 0$) can be
     //  created using the class {cpp:class}`DirichletBC`. A
@@ -239,7 +239,7 @@ int main(int argc, char* argv[])
     fem::assemble_vector(b.mutable_array(), *L);
     fem::apply_lifting<T, U>(b.mutable_array(), {a}, {{bc}}, {}, T(1.0));
     b.scatter_rev(std::plus<T>());
-    fem::set_bc<T, U>(b.mutable_array(), {bc});
+    bc->set(b.mutable_array(), std::nullopt);
 
     la::petsc::KrylovSolver lu(MPI_COMM_WORLD);
     la::petsc::options::set("ksp_type", "preonly");

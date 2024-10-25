@@ -11,6 +11,7 @@
 #include "DofMap.h"
 #include "FiniteElement.h"
 #include "FunctionSpace.h"
+#include <algorithm>
 #include <basix/mdspan.hpp>
 #include <concepts>
 #include <dolfinx/common/IndexMap.h>
@@ -133,12 +134,12 @@ using mdspan_t = MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
 
 /// @brief Scatter data into non-contiguous memory.
 ///
-/// Scatter blocked data `send_values` to its corresponding `src_rank` and
-/// insert the data into `recv_values`. The insert location in
+/// Scatter blocked data `send_values` to its corresponding `src_rank`
+/// and insert the data into `recv_values`. The insert location in
 /// `recv_values` is determined by `dest_ranks`. If the j-th dest rank
 /// is -1, then `recv_values[j*block_size:(j+1)*block_size]) = 0`.
 ///
-/// @param[in] comm The MPI communicator
+/// @param[in] comm The MPI communicator.
 /// @param[in] src_ranks Rank owning the values of each row in
 /// `send_values`.
 /// @param[in] dest_ranks List of ranks receiving data. Size of array is
@@ -162,8 +163,8 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
   // Build unique set of the sorted src_ranks
   std::vector<std::int32_t> out_ranks(src_ranks.size());
   out_ranks.assign(src_ranks.begin(), src_ranks.end());
-  out_ranks.erase(std::unique(out_ranks.begin(), out_ranks.end()),
-                  out_ranks.end());
+  auto [unique_end, range_end] = std::ranges::unique(out_ranks);
+  out_ranks.erase(unique_end, range_end);
   out_ranks.reserve(out_ranks.size() + 1);
 
   // Remove negative entries from dest_ranks
@@ -174,8 +175,11 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
                [](auto rank) { return rank >= 0; });
 
   // Create unique set of sorted in-ranks
-  std::sort(in_ranks.begin(), in_ranks.end());
-  in_ranks.erase(std::unique(in_ranks.begin(), in_ranks.end()), in_ranks.end());
+  {
+    std::ranges::sort(in_ranks);
+    auto [unique_end, range_end] = std::ranges::unique(in_ranks);
+    in_ranks.erase(unique_end, range_end);
+  }
   in_ranks.reserve(in_ranks.size() + 1);
 
   // Create neighborhood communicator
@@ -190,19 +194,24 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
   std::vector<std::int32_t> recv_offsets(in_ranks.size() + 1, 0);
   {
     // Build map from parent to neighborhood communicator ranks
-    std::map<std::int32_t, std::int32_t> rank_to_neighbor;
+    std::vector<std::pair<std::int32_t, std::int32_t>> rank_to_neighbor;
+    rank_to_neighbor.reserve(in_ranks.size());
     for (std::size_t i = 0; i < in_ranks.size(); i++)
-      rank_to_neighbor[in_ranks[i]] = i;
+      rank_to_neighbor.push_back({in_ranks[i], i});
+    std::ranges::sort(rank_to_neighbor);
 
     // Compute receive sizes
-    std::for_each(
-        dest_ranks.begin(), dest_ranks.end(),
+    std::ranges::for_each(
+        dest_ranks,
         [&dest_ranks, &rank_to_neighbor, &recv_sizes, block_size](auto rank)
         {
           if (rank >= 0)
           {
-            const int neighbor = rank_to_neighbor[rank];
-            recv_sizes[neighbor] += block_size;
+            auto it = std::ranges::lower_bound(rank_to_neighbor, rank,
+                                               std::ranges::less(),
+                                               [](auto e) { return e.first; });
+            assert(it != rank_to_neighbor.end() and it->first == rank);
+            recv_sizes[it->second] += block_size;
           }
         });
 
@@ -217,10 +226,13 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
     {
       if (const std::int32_t rank = dest_ranks[i]; rank >= 0)
       {
-        const int neighbor = rank_to_neighbor[rank];
-        int insert_pos = recv_offsets[neighbor] + recv_counter[neighbor];
+        auto it = std::ranges::lower_bound(rank_to_neighbor, rank,
+                                           std::ranges::less(),
+                                           [](auto e) { return e.first; });
+        assert(it != rank_to_neighbor.end() and it->first == rank);
+        int insert_pos = recv_offsets[it->second] + recv_counter[it->second];
         comm_to_output[insert_pos / block_size] = i * block_size;
-        recv_counter[neighbor] += block_size;
+        recv_counter[it->second] += block_size;
       }
     }
   }
@@ -228,15 +240,28 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
   std::vector<std::int32_t> send_sizes(out_ranks.size());
   send_sizes.reserve(1);
   {
-    // Compute map from parent mpi rank to neigbor rank for outgoing data
-    std::map<std::int32_t, std::int32_t> rank_to_neighbor;
+    // Compute map from parent MPI rank to neighbor rank for outgoing
+    // data. `out_ranks` is sorted, so rank_to_neighbor will be sorted
+    // too.
+    std::vector<std::pair<std::int32_t, std::int32_t>> rank_to_neighbor;
+    rank_to_neighbor.reserve(out_ranks.size());
     for (std::size_t i = 0; i < out_ranks.size(); i++)
-      rank_to_neighbor[out_ranks[i]] = i;
+      rank_to_neighbor.push_back({out_ranks[i], i});
 
-    // Compute send sizes
-    std::for_each(src_ranks.begin(), src_ranks.end(),
-                  [&rank_to_neighbor, &send_sizes, block_size](auto rank)
-                  { send_sizes[rank_to_neighbor[rank]] += block_size; });
+    // Compute send sizes. As `src_ranks` is sorted, we can move 'start'
+    // in search forward.
+    auto start = rank_to_neighbor.begin();
+    std::ranges::for_each(
+        src_ranks,
+        [&rank_to_neighbor, &send_sizes, block_size, &start](auto rank)
+        {
+          auto it = std::ranges::lower_bound(start, rank_to_neighbor.end(),
+                                             rank, std::ranges::less(),
+                                             [](auto e) { return e.first; });
+          assert(it != rank_to_neighbor.end() and it->first == rank);
+          send_sizes[it->second] += block_size;
+          start = it;
+        });
   }
 
   // Compute sending offsets
@@ -253,8 +278,9 @@ void scatter_values(MPI_Comm comm, std::span<const std::int32_t> src_ranks,
                          dolfinx::MPI::mpi_type<T>(), reverse_comm);
   MPI_Comm_free(&reverse_comm);
 
-  // Insert values received from neighborhood communicator in output span
-  std::fill(recv_values.begin(), recv_values.end(), T(0));
+  // Insert values received from neighborhood communicator in output
+  // span
+  std::ranges::fill(recv_values, T(0));
   for (std::size_t i = 0; i < comm_to_output.size(); i++)
   {
     auto vals = std::next(recv_values.begin(), comm_to_output[i]);
@@ -399,7 +425,7 @@ void interpolate_same_map(Function<T, U>& u1, const Function<T, U>& u0,
 
     // FIXME: Get compile-time ranges from Basix
     // Apply interpolation operator
-    std::fill(local1.begin(), local1.end(), 0);
+    std::ranges::fill(local1, 0);
     for (std::size_t i = 0; i < im_shape[0]; ++i)
       for (std::size_t j = 0; j < im_shape[1]; ++j)
         local1[i] += static_cast<X>(i_m[im_shape[1] * i + j]) * local0[j];
@@ -563,7 +589,7 @@ void interpolate_nonmatching_maps(Function<T, U>& u1,
     }
 
     // Compute Jacobians and reference points for current cell
-    std::fill(J_b.begin(), J_b.end(), 0);
+    std::ranges::fill(J_b, 0);
     for (std::size_t p = 0; p < Xshape[0]; ++p)
     {
       auto dphi = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
@@ -907,11 +933,12 @@ void interpolate(Function<T, U>& u, std::span<const T> f,
 
     std::vector<U> coord_dofs_b(num_dofs_g * gdim);
     mdspan2_t coord_dofs(coord_dofs_b.data(), num_dofs_g, gdim);
-
-    std::vector<T> ref_data_b(Xshape[0] * 1 * value_size);
+    const std::size_t value_size_ref
+        = element->reference_value_size() / element_bs;
+    std::vector<T> ref_data_b(Xshape[0] * 1 * value_size_ref);
     MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
         T, MDSPAN_IMPL_STANDARD_NAMESPACE::dextents<std::size_t, 3>>
-        ref_data(ref_data_b.data(), Xshape[0], 1, value_size);
+        ref_data(ref_data_b.data(), Xshape[0], 1, value_size_ref);
 
     std::vector<T> _vals_b(Xshape[0] * 1 * value_size);
     MDSPAN_IMPL_STANDARD_NAMESPACE::mdspan<
@@ -964,7 +991,7 @@ void interpolate(Function<T, U>& u, std::span<const T> f,
       }
 
       // Compute J, detJ and K
-      std::fill(J_b.begin(), J_b.end(), 0);
+      std::ranges::fill(J_b, 0);
       for (std::size_t p = 0; p < Xshape[0]; ++p)
       {
         auto _dphi = MDSPAN_IMPL_STANDARD_NAMESPACE::submdspan(
@@ -1107,10 +1134,11 @@ void interpolate(Function<T, U>& u, const Function<T, U>& v,
   assert(element_u);
   const std::size_t value_size = u.function_space()->value_size();
 
-  auto& dest_ranks = interpolation_data.src_owner;
-  auto& src_ranks = interpolation_data.dest_owners;
-  auto& recv_points = interpolation_data.dest_points;
-  auto& evaluation_cells = interpolation_data.dest_cells;
+  const std::vector<int>& dest_ranks = interpolation_data.src_owner;
+  const std::vector<int>& src_ranks = interpolation_data.dest_owners;
+  const std::vector<U>& recv_points = interpolation_data.dest_points;
+  const std::vector<std::int32_t>& evaluation_cells
+      = interpolation_data.dest_cells;
 
   // Evaluate the interpolating function where possible
   std::vector<T> send_values(recv_points.size() / 3 * value_size);
@@ -1178,7 +1206,7 @@ void interpolate(Function<T, U>& u1, std::span<const std::int32_t> cells1,
     // Same function spaces and on whole mesh
     std::span<T> u1_array = u1.x()->mutable_array();
     std::span<const T> u0_array = u0.x()->array();
-    std::copy(u0_array.begin(), u0_array.end(), u1_array.begin());
+    std::ranges::copy(u0_array, u1_array.begin());
   }
   else
   {

@@ -210,8 +210,8 @@ public:
     // Store kernels, looping over integrals by domain type (dimension)
     for (auto&& [domain_type, data] : integrals)
     {
-      if (!std::is_sorted(data.begin(), data.end(),
-                          [](auto& a, auto& b) { return a.id < b.id; }))
+      if (!std::ranges::is_sorted(data,
+                                  [](auto& a, auto& b) { return a.id < b.id; }))
       {
         throw std::runtime_error("Integral IDs not sorted");
       }
@@ -268,9 +268,8 @@ public:
   kernel(IntegralType type, int i) const
   {
     const auto& integrals = _integrals[static_cast<std::size_t>(type)];
-    auto it = std::lower_bound(integrals.begin(), integrals.end(), i,
-                               [](auto& itg_data, int i)
-                               { return itg_data.id < i; });
+    auto it = std::ranges::lower_bound(integrals, i, std::less<>{},
+                                       [](const auto& a) { return a.id; });
     if (it != integrals.end() and it->id == i)
       return it->kernel;
     else
@@ -326,8 +325,8 @@ public:
   {
     std::vector<int> ids;
     const auto& integrals = _integrals[static_cast<std::size_t>(type)];
-    std::transform(integrals.begin(), integrals.end(), std::back_inserter(ids),
-                   [](auto& integral) { return integral.id; });
+    std::ranges::transform(integrals, std::back_inserter(ids),
+                           [](auto& integral) { return integral.id; });
     return ids;
   }
 
@@ -351,9 +350,8 @@ public:
   std::span<const std::int32_t> domain(IntegralType type, int i) const
   {
     const auto& integrals = _integrals[static_cast<std::size_t>(type)];
-    auto it = std::lower_bound(integrals.begin(), integrals.end(), i,
-                               [](auto& itg_data, int i)
-                               { return itg_data.id < i; });
+    auto it = std::ranges::lower_bound(integrals, i, std::less<>{},
+                                       [](const auto& a) { return a.id; });
     if (it != integrals.end() and it->id == i)
       return it->entities;
     else
@@ -387,9 +385,8 @@ public:
       {
       case IntegralType::cell:
       {
-        std::transform(entities.begin(), entities.end(),
-                       std::back_inserter(mapped_entities),
-                       [&entity_map](auto e) { return entity_map[e]; });
+        std::ranges::transform(entities, std::back_inserter(mapped_entities),
+                               [&entity_map](auto e) { return entity_map[e]; });
         break;
       }
       case IntegralType::exterior_facet:
@@ -431,11 +428,35 @@ public:
       }
       case IntegralType::interior_facet:
       {
-        for (std::size_t i = 0; i < entities.size(); i += 2)
+        // Get the codimension of the mesh
+        const int tdim = _mesh->topology()->dim();
+        const int codim = tdim - mesh.topology()->dim();
+        assert(codim >= 0);
+        if (codim == 0)
         {
-          // Add cell and the local facet index
-          mapped_entities.insert(mapped_entities.end(),
-                                 {entity_map[entities[i]], entities[i + 1]});
+          for (std::size_t i = 0; i < entities.size(); i += 2)
+          {
+            // Add cell and the local facet index
+            mapped_entities.insert(mapped_entities.end(),
+                                   {entity_map[entities[i]], entities[i + 1]});
+          }
+        }
+        else if (codim == 1)
+        {
+          // In this case, the entity maps take facets in (`_mesh`) to cells in
+          // `mesh`, so we need to get the facet number from the (cell,
+          // local_facet pair) first.
+          auto c_to_f = _mesh->topology()->connectivity(tdim, tdim - 1);
+          assert(c_to_f);
+          for (std::size_t i = 0; i < entities.size(); i += 2)
+          {
+            // Get the facet index
+            const std::int32_t facet
+                = c_to_f->links(entities[i])[entities[i + 1]];
+            // Add cell and the local facet index
+            mapped_entities.insert(mapped_entities.end(),
+                                   {entity_map[facet], entities[i + 1]});
+          }
         }
         break;
       }

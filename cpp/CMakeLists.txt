@@ -2,9 +2,13 @@
 # Top level CMakeLists.txt file for DOLFINx
 cmake_minimum_required(VERSION 3.21)
 
+if(POLICY CMP0167)
+  cmake_policy(SET CMP0167 NEW)  # Boost CONFIG mode
+endif()
+
 # ------------------------------------------------------------------------------
 # Set project name and version number
-project(DOLFINX VERSION "0.9.0.0")
+project(DOLFINX VERSION "0.10.0.0")
 
 set(DOXYGEN_DOLFINX_VERSION
     ${DOLFINX_VERSION}
@@ -12,15 +16,6 @@ set(DOXYGEN_DOLFINX_VERSION
 )
 
 # ------------------------------------------------------------------------------
-# Use C++20
-set(CMAKE_CXX_STANDARD 20)
-
-# Require C++20
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Do not enable compler-specific extensions
-set(CMAKE_CXX_EXTENSIONS OFF)
-
 if(WIN32)
   # Windows requires all symbols to be manually exported. This flag exports all
   # symbols automatically, as in Unix.
@@ -229,7 +224,7 @@ else()
       CACHE BOOL "Is KaHIP REQUIRED?"
   )
 endif()
-option(DOLFINX_ENABLE_KAHIP "Compile with support for KaHIP." OFF)
+option(DOLFINX_ENABLE_KAHIP "Compile with support for KaHIP." ON)
 set_package_properties(
   KaHIP PROPERTIES
   TYPE OPTIONAL
@@ -354,7 +349,7 @@ if(DOLFINX_BASIX_PYTHON)
   endif()
 endif()
 
-find_package(Basix 0.8 REQUIRED CONFIG HINTS ${BASIX_PY_DIR})
+find_package(Basix 0.10 REQUIRED CONFIG HINTS ${BASIX_PY_DIR})
 set_package_properties(
   basix PROPERTIES
   TYPE REQUIRED
@@ -385,7 +380,7 @@ set_package_properties(
 # which method UFCx was found.
 if(NOT DOLFINX_UFCX_PYTHON)
   # Check in CONFIG mode, i.e. look for installed ufcxConfig.cmake
-  find_package(ufcx 0.9 REQUIRED CONFIG)
+  find_package(ufcx 0.10 REQUIRED CONFIG)
 else()
   # Check in MODULE mode (using FindUFCX.cmake) using Python intepreter.
   find_package(
@@ -393,7 +388,7 @@ else()
     COMPONENTS Interpreter
     REQUIRED
   )
-  find_package(UFCx 0.9 REQUIRED MODULE)
+  find_package(UFCx 0.10 REQUIRED MODULE)
 endif()
 
 set_package_properties(

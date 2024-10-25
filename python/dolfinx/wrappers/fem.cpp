@@ -35,6 +35,7 @@
 #include <nanobind/stl/complex.h>
 #include <nanobind/stl/function.h>
 #include <nanobind/stl/map.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/set.h>
 #include <nanobind/stl/shared_ptr.h>
@@ -109,7 +110,8 @@ void declare_function_space(nb::module_& m, std::string type)
             "__init__",
             [](dolfinx::fem::FiniteElement<T>* self,
                basix::FiniteElement<T>& element, std::size_t block_size,
-               bool symmetric) {
+               bool symmetric)
+            {
               new (self) dolfinx::fem::FiniteElement<T>(element, block_size,
                                                         symmetric);
             },
@@ -364,6 +366,24 @@ void declare_objects(nb::module_& m, const std::string& type)
                                   dofs.data(), {dofs.size()}, nb::handle()),
                               owned);
            })
+      .def(
+          "set",
+          [](const dolfinx::fem::DirichletBC<T, U>& self,
+             nb::ndarray<T, nb::ndim<1>, nb::c_contig> b,
+             std::optional<nb::ndarray<const T, nb::ndim<1>, nb::c_contig>> x0,
+             T alpha)
+          {
+            auto _b = std::span(b.data(), b.size());
+            if (x0.has_value())
+            {
+              self.set(_b, std::span(x0.value().data(), x0.value().shape(0)),
+                       alpha);
+            }
+            else
+              self.set(_b, std::nullopt, alpha);
+          },
+          nb::arg("b").noconvert(), nb::arg("x0").noconvert().none(),
+          nb::arg("alpha"))
       .def_prop_ro("function_space",
                    &dolfinx::fem::DirichletBC<T, U>::function_space)
       .def_prop_ro("value", &dolfinx::fem::DirichletBC<T, U>::value);
@@ -797,10 +817,14 @@ void declare_form(nb::module_& m, std::string type)
          const std::map<std::string,
                         std::shared_ptr<const dolfinx::fem::Constant<T>>>&
              constants,
-         const std::map<dolfinx::fem::IntegralType,
-                        std::vector<std::pair<std::int32_t,
-                                              std::span<const std::int32_t>>>>&
+         const std::map<
+             dolfinx::fem::IntegralType,
+             std::vector<std::pair<
+                 std::int32_t, nb::ndarray<const std::int32_t, nb::c_contig>>>>&
              subdomains,
+         const std::map<std::shared_ptr<const dolfinx::mesh::Mesh<U>>,
+                        nb::ndarray<const std::int32_t, nb::c_contig>>&
+             entity_maps,
          std::shared_ptr<const dolfinx::mesh::Mesh<U>> mesh = nullptr)
       {
         std::map<
@@ -814,14 +838,18 @@ void declare_form(nb::module_& m, std::string type)
             x.emplace_back(id, std::span(idx.data(), idx.size()));
           sd.insert({itg, std::move(x)});
         }
-
+        std::map<std::shared_ptr<const dolfinx::mesh::Mesh<U>>,
+                 std::span<const int32_t>>
+            _entity_maps;
+        for (auto& [msh, map] : entity_maps)
+          _entity_maps.emplace(msh, std::span(map.data(), map.size()));
         ufcx_form* p = reinterpret_cast<ufcx_form*>(form);
-        return dolfinx::fem::create_form<T, U>(*p, spaces, coefficients,
-                                               constants, sd, mesh);
+        return dolfinx::fem::create_form<T, U>(
+            *p, spaces, coefficients, constants, sd, _entity_maps, mesh);
       },
       nb::arg("form"), nb::arg("spaces"), nb::arg("coefficients"),
-      nb::arg("constants"), nb::arg("subdomains"), nb::arg("mesh"),
-      "Create Form from a pointer to ufcx_form.");
+      nb::arg("constants"), nb::arg("subdomains"), nb::arg("entity_maps"),
+      nb::arg("mesh"), "Create Form from a pointer to ufcx_form.");
 
   m.def("create_sparsity_pattern",
         &dolfinx::fem ::create_sparsity_pattern<T, U>, nb::arg("a"),
