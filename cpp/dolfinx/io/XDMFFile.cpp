@@ -466,7 +466,8 @@ template void XDMFFile::write_meshtags(const mesh::MeshTags<std::int32_t>&,
 template <typename T>
 mesh::MeshTags<T>
 XDMFFile::read_meshtags(const mesh::Mesh<double>& mesh, std::string name,
-                        std::string attribute_name, std::string xpath)
+                        std::optional<std::string> attribute_name,
+                        std::string xpath)
 {
   spdlog::info("XDMF read meshtags ({})", name);
   pugi::xml_node node = _xml_doc->select_node(xpath.c_str()).node();
@@ -479,28 +480,21 @@ XDMFFile::read_meshtags(const mesh::Mesh<double>& mesh, std::string name,
 
   const auto [entities, eshape] = read_topology_data(name, xpath);
 
-  pugi::xml_node attribute_node = grid_node.child("Attribute");
-  pugi::xml_node values_data_node = attribute_node.child("DataItem");
-  if (not attribute_name.empty())
+  pugi::xml_node values_data_node
+      = grid_node.child("Attribute").child("DataItem");
+  if (attribute_name)
   {
-    bool found = false;
-    for (; attribute_node;
-         attribute_node = attribute_node.next_sibling("Attribute"))
+    // Search for a child that contains an attribute with the requested name
+    pugi::xml_node attribute_node = grid_node.find_child(
+        [attr_name = *attribute_name](auto n)
+        { return n.attribute("Name").value() == attr_name; });
+    if (!attribute_node)
     {
-      pugi::xml_attribute hint;
-      pugi::xml_attribute name = attribute_node.attribute("Name", hint);
-      if (std::string(name.value()) == attribute_name)
-      {
-        values_data_node = attribute_node.child("DataItem");
-        found = true;
-        break;
-      }
-    }
-    if (not found)
-    {
-      throw std::runtime_error("Attribute with name '" + attribute_name
+      throw std::runtime_error("Attribute with name '" + *attribute_name
                                + "' not found.");
     }
+    else
+      values_data_node = attribute_node.child("DataItem");
   }
   const std::vector values
       = xdmf_utils::get_dataset<T>(_comm.comm(), values_data_node, _h5_id);
