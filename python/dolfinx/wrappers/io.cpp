@@ -82,6 +82,15 @@ void xdmf_scalar_fn(auto&& m)
       { self.write_function(u, t, mesh_xpath); },
       nb::arg("u"), nb::arg("t"),
       nb::arg("mesh_xpath") = "/Xdmf/Domain/Grid[@GridType='Uniform'][1]");
+
+  m.def(
+      "read_function",
+      [](dolfinx::io::XDMFFile& self, const mesh::Mesh<U>& mesh,
+         const std::string name, dolfinx::fem::Function<T, U>& u,
+         std::optional<std::string> function_name, std::string xpath)
+      { self.read_function(mesh, name, u, function_name, xpath); },
+      nb::arg("msh"), nb::arg("name"), nb::arg("u"), nb::arg("function_name"),
+      nb::arg("mesh_xpath") = "/Xdmf/Domain/Grid[@GridType='Uniform'][1]");
 }
 
 template <typename T>

@@ -179,6 +179,27 @@ class XDMFFile(_cpp.io.XDMFFile):
         """
         super().write_function(getattr(u, "_cpp_object", u), t, mesh_xpath)
 
+    def read_function(
+        self, msh: Mesh, name: string, u: Function, function_name,
+        mesh_xpath="/Xdmf/Domain/Grid[@GridType='Uniform'][1]"
+    ):
+        """Read function from file.
+
+        Note:
+            Can only read a P1 function for now.
+
+        Args:
+            msh: Mesh associated with the mesh.
+            name: Name of the function to read.
+            u: Function into which to read from file.
+            function_name: Name of the function to read inside the XDMF file.
+            mesh_xpath: Path to mesh associated with the Function in the
+                XDMFFile.
+        """
+        super().read_function(getattr(msh, "_cpp_object", msh), name,
+                              getattr(u, "_cpp_object", u),
+                              function_name, mesh_xpath)
+
     def read_mesh(
         self, ghost_mode=GhostMode.shared_facet, name="mesh", xpath="/Xdmf/Domain"
     ) -> Mesh:
