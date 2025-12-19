@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <concepts>
 #include <dolfinx/common/IndexMap.h>
+#include <dolfinx/fem/Function.h>
 #include <dolfinx/io/cells.h>
+#include <dolfinx/io/utils.h>
 #include <dolfinx/mesh/Mesh.h>
 #include <dolfinx/mesh/Topology.h>
 #include <dolfinx/mesh/utils.h>
@@ -296,6 +298,68 @@ void write_data(std::string point_or_cell, std::string filename,
   }
 
   hdf5::close_file(h5file);
+}
+
+/// @brief Write a CG1 function to VTKHDF.
+///
+/// Adds a function to an existing VTKHDF file, which already contains a mesh.
+///
+/// @tparam U Scalar type.
+/// @param[in] filename File for output.
+/// @param[in] mesh Mesh, which must be the same as the original mesh
+/// used in the file.
+/// @param[in] u Function to write to file.
+/// @param[in] time Timestamp.
+///
+/// @note Mesh must be written to file first using `VTKHDF::write_mesh`.
+/// @note Only one dataset "u" can be written per file at present, with
+/// multiple timesteps.
+/// @note Limited support for floating point types at present (no
+/// complex number support).
+template <std::floating_point U>
+void write_CG1_function(std::string filename, const mesh::Mesh<U>& mesh,
+                        const fem::Function<U>& u, double time)
+{
+  io::VTKHDF::write_data<U>(
+      "Point", filename, mesh,
+      std::vector<U>(std::begin(u.x()->array()),
+                     std::begin(u.x()->array())
+                         + mesh.geometry().index_map()->size_local()
+                               * u.function_space()->dofmaps(0)->bs()),
+      time);
+}
+
+/// @brief Write a DG0 function to VTKHDF.
+///
+/// Adds a function to an existing VTKHDF file, which already contains a mesh.
+///
+/// @tparam U Scalar type.
+/// @param[in] filename File for output.
+/// @param[in] mesh Mesh, which must be the same as the original mesh
+/// used in the file.
+/// @param[in] u Function to write to file.
+/// @param[in] time Timestamp.
+///
+/// @note Mesh must be written to file first using `VTKHDF::write_mesh`.
+/// @note Only one dataset "u" can be written per file at present, with
+/// multiple timesteps.
+/// @note Limited support for floating point types at present (no
+/// complex number support).
+template <std::floating_point U>
+void write_DG0_function(std::string filename, const mesh::Mesh<U>& mesh,
+                        const fem::Function<U>& u, double time)
+{
+  const auto index_maps = mesh.topology()->index_maps(mesh.topology()->dim());
+  int npoints
+      = std::accumulate(index_maps.begin(), index_maps.end(), 0,
+                        [](int a, auto im) { return a + im->size_local(); });
+
+  io::VTKHDF::write_data<U>(
+      "Cell", filename, mesh,
+      std::vector<U>(std::begin(u.x()->array()),
+                     std::begin(u.x()->array())
+                         + npoints * u.function_space()->dofmaps(0)->bs()),
+      time);
 }
 
 /// @brief Read a mesh from a VTKHDF format file.
